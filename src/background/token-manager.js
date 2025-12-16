@@ -320,7 +320,7 @@ async function refreshToken(name, k, obj) {
   const result = await postQuery(provider.tokenURL, body);
   if (!result.refresh_token) {
     // reuse old refresh token
-    result.refresh_token = refreshToken;
+    result.refresh_token = token;
   }
   return handleTokenResult(result, k);
 }
