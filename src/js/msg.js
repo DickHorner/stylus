@@ -15,6 +15,44 @@ export const wrapError = error => ({
   }, error), // passing custom properties e.g. `error.index`
 });
 
+// Message origin validation to prevent untrusted sources from sending messages
+function isMessageTrusted(sender) {
+  // Validate sender.id matches our extension
+  if (sender.id !== chrome.runtime.id) {
+    return false;
+  }
+
+  // Validate URL if present (defense-in-depth)
+  if (sender.url) {
+    try {
+      const url = new URL(sender.url);
+      // Only allow messages from our extension's pages
+      // Using .host which includes both hostname and port (though extensions don't use ports)
+      if (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') {
+        return url.host === chrome.runtime.id;
+      }
+      // For content scripts in regular web pages, verify the origin
+      if (sender.origin) {
+        return sender.origin === `chrome-extension://${chrome.runtime.id}` ||
+               sender.origin === `moz-extension://${chrome.runtime.id}`;
+      }
+      // If no origin is set but URL is from a web page, it might be a content script
+      // Allow for backward compatibility but log for monitoring
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        console.debug('Message from content script without explicit origin:', sender.url);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('Invalid sender URL:', sender.url, e);
+      return false;
+    }
+  }
+
+  // Messages without URL (e.g., from background or popup) are trusted if sender.id matches
+  return true;
+}
+
 chrome.runtime.onMessage.addListener(onRuntimeMessage);
 if (__.ENTRY) {
   chrome.runtime.onConnect.addListener(async port => {
@@ -52,6 +90,12 @@ export function _execute(data, sender, multi, broadcast) {
 }
 
 function onRuntimeMessage({data, multi, TDM, broadcast}, sender, sendResponse) {
+  // Validate message origin to prevent unauthorized access
+  if (!isMessageTrusted(sender)) {
+    console.warn('Rejected message from untrusted origin:', sender);
+    return;
+  }
+
   if (!__.MV3 && !__.IS_BG && data.method === 'backgroundReady') {
     bgReadySignal?.(true);
   }

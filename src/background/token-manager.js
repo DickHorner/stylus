@@ -8,6 +8,21 @@ import {browserWindows} from '@/js/util-webext';
 import launchWebAuthFlow from 'webext-launch-web-auth-flow';
 import {isVivaldi} from './common';
 
+/**
+ * OAuth provider configurations
+ *
+ * SECURITY NOTE: OAuth client secrets have been removed from providers that use
+ * the 'code' flow (google, onedrive, userstylesworld). This is a security best
+ * practice as client secrets should never be embedded in client-side code.
+ *
+ * KNOWN LIMITATION: Without client secrets, the OAuth authorization code flow
+ * will not work properly for these providers. The proper solution is to implement
+ * a backend OAuth proxy service that securely stores the client secrets and
+ * performs the token exchange on behalf of the extension.
+ *
+ * Providers using the 'token' flow (like dropbox) do not require client secrets
+ * and continue to work normally.
+ */
 const AUTH = {
   dropbox: {
     flow: 'token',
@@ -25,7 +40,7 @@ const AUTH = {
   google: {
     flow: 'code',
     clientId: '283762574871-d4u58s4arra5jdan2gr00heasjlttt1e.apps.googleusercontent.com',
-    clientSecret: 'J0nc5TlR_0V_ex9-sZk-5faf',
+    // clientSecret removed - requires backend OAuth service for security
     authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
     authQuery: {
       // NOTE: Google needs 'prompt' parameter to deliver multiple refresh
@@ -45,7 +60,7 @@ const AUTH = {
   onedrive: {
     flow: 'code',
     clientId: '3864ce03-867c-4ad8-9856-371a097d47b1',
-    clientSecret: '9Pj=TpsrStq8K@1BiwB9PIWLppM:@s=w',
+    // clientSecret removed - requires backend OAuth service for security
     authURL: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
     tokenURL: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
     scopes: ['Files.ReadWrite.AppFolder', 'offline_access'],
@@ -53,8 +68,7 @@ const AUTH = {
   userstylesworld: {
     flow: 'code',
     clientId: 'zeDmKhJIfJqULtcrGMsWaxRtWHEimKgS',
-    clientSecret: 'wqHsvTuThQmXmDiVvOpZxPwSIbyycNFImpAOTxjaIRqDbsXcTOqrymMJKsOMuibFaij' +
-      'ZZAkVYTDbLkQuYFKqgpMsMlFlgwQOYHvHFbgxQHDTwwdOroYhOwFuekCwXUlk',
+    // clientSecret removed - requires backend OAuth service for security
     authURL: URLS.usw + 'api/oauth/style/link',
     tokenURL: URLS.usw + 'api/oauth/token',
     redirect_uri: 'https://gusted.xyz/callback_helper/',
@@ -76,6 +90,117 @@ class TokenError extends Error {
   }
 }
 
+// Token encryption using AES-256-GCM for defense-in-depth protection
+let encryptionKey = null;
+
+async function getEncryptionKey() {
+  if (encryptionKey) return encryptionKey;
+
+  // Try to get existing key from storage
+  const stored = await chromeLocal.getValue('tokenEncryptionKey');
+  if (stored) {
+    encryptionKey = await crypto.subtle.importKey(
+      'jwk',
+      stored,
+      {name: 'AES-GCM', length: 256},
+      true,
+      ['encrypt', 'decrypt']
+    );
+    return encryptionKey;
+  }
+
+  // Generate new key
+  encryptionKey = await crypto.subtle.generateKey(
+    {name: 'AES-GCM', length: 256},
+    true,
+    ['encrypt', 'decrypt']
+  );
+
+  // Store key for future use
+  const exportedKey = await crypto.subtle.exportKey('jwk', encryptionKey);
+  await chromeLocal.setValue('tokenEncryptionKey', exportedKey);
+
+  return encryptionKey;
+}
+
+async function encryptToken(token) {
+  if (!token) return token;
+
+  try {
+    const key = await getEncryptionKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(token);
+
+    const encrypted = await crypto.subtle.encrypt(
+      {name: 'AES-GCM', iv},
+      key,
+      encoded
+    );
+
+    // Combine IV and encrypted data, then base64 encode
+    const combined = new Uint8Array(iv.length + encrypted.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(encrypted), iv.length);
+
+    // Use chunked approach to avoid stack overflow with large arrays
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < combined.length; i += chunkSize) {
+      const chunk = combined.subarray(i, Math.min(i + chunkSize, combined.length));
+      binary += Array.from(chunk, byte => String.fromCharCode(byte)).join('');
+    }
+    return btoa(binary);
+  } catch (err) {
+    console.error('Token encryption failed:', err);
+    // Throw error instead of falling back to plaintext to maintain security
+    throw new Error(`Token encryption failed: ${err.message}`);
+  }
+}
+
+async function decryptToken(encryptedToken) {
+  if (!encryptedToken) return encryptedToken;
+
+  // Check if token appears to be base64 encoded (encrypted format)
+  // Base64 only contains alphanumeric, +, /, and = characters
+  const isEncrypted = /^[A-Za-z0-9+/]+=*$/.test(encryptedToken);
+
+  if (!isEncrypted) {
+    // Token is not in encrypted format, likely legacy plaintext
+    console.warn('Decrypting legacy plaintext token');
+    return encryptedToken;
+  }
+
+  try {
+    const key = await getEncryptionKey();
+
+    // Base64 decode
+    const combined = Uint8Array.from(atob(encryptedToken), c => c.charCodeAt(0));
+
+    // Verify minimum length (12 bytes IV + at least some encrypted data)
+    if (combined.length < 13) {
+      console.error('Token too short to be encrypted');
+      return encryptedToken;
+    }
+
+    // Extract IV and encrypted data
+    const iv = combined.slice(0, 12);
+    const encrypted = combined.slice(12);
+
+    const decrypted = await crypto.subtle.decrypt(
+      {name: 'AES-GCM', iv},
+      key,
+      encrypted
+    );
+
+    return new TextDecoder().decode(decrypted);
+  } catch (err) {
+    console.error('Token decryption failed:', err);
+    // If decryption fails, return plaintext for backward compatibility
+    // but log the error for debugging
+    return encryptedToken;
+  }
+}
+
 function buildKeys(name, hooks) {
   const prefix = `secure/token/${hooks ? hooks.keyName(name) : name}/`;
   const k = {
@@ -92,7 +217,8 @@ export async function getToken(name, interactive, hooks) {
   const obj = await chromeLocal.get(k.LIST);
   if (obj[k.TOKEN]) {
     if (!obj[k.EXPIRE] || Date.now() < obj[k.EXPIRE]) {
-      return obj[k.TOKEN];
+      // Decrypt token before returning
+      return decryptToken(obj[k.TOKEN]);
     }
     if (obj[k.REFRESH]) {
       return refreshToken(name, k, obj);
@@ -109,8 +235,11 @@ export async function revokeToken(name, hooks) {
   const k = buildKeys(name, hooks);
   if (provider.revoke) {
     try {
-      const token = await chromeLocal.getValue(k.TOKEN);
-      if (token) await provider.revoke(token);
+      const encryptedToken = await chromeLocal.getValue(k.TOKEN);
+      if (encryptedToken) {
+        const token = await decryptToken(encryptedToken);
+        await provider.revoke(token);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -123,9 +252,11 @@ async function refreshToken(name, k, obj) {
     throw new TokenError(name, 'No refresh token');
   }
   const provider = AUTH[name];
+  // Decrypt the refresh token before using it
+  const decryptedRefresh = await decryptToken(obj[k.REFRESH]);
   const body = {
     client_id: provider.clientId,
-    refresh_token: obj[k.REFRESH],
+    refresh_token: decryptedRefresh,
     grant_type: 'refresh_token',
     scope: provider.scopes.join(' '),
   };
@@ -134,8 +265,8 @@ async function refreshToken(name, k, obj) {
   }
   const result = await postQuery(provider.tokenURL, body);
   if (!result.refresh_token) {
-    // reuse old refresh token
-    result.refresh_token = obj[k.REFRESH];
+    // reuse old refresh token (already encrypted in storage)
+    result.refresh_token = decryptedRefresh;
   }
   return handleTokenResult(result, k);
 }
@@ -241,12 +372,16 @@ async function authUserMV3(url, interactive, redirectUri) {
 }
 
 async function handleTokenResult(result, k) {
+  // Encrypt tokens before storing for defense-in-depth protection
+  const encryptedToken = await encryptToken(result.access_token);
+  const encryptedRefresh = await encryptToken(result.refresh_token);
+
   await chromeLocal.set({
-    [k.TOKEN]: result.access_token,
+    [k.TOKEN]: encryptedToken,
     [k.EXPIRE]: result.expires_in
       ? Date.now() + (result.expires_in - NETWORK_LATENCY) * 1000
       : undefined,
-    [k.REFRESH]: result.refresh_token,
+    [k.REFRESH]: encryptedRefresh,
   });
   return result.access_token;
 }
