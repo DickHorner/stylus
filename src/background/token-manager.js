@@ -147,7 +147,7 @@ async function encryptToken(token) {
     const chunkSize = 8192;
     for (let i = 0; i < combined.length; i += chunkSize) {
       const chunk = combined.subarray(i, Math.min(i + chunkSize, combined.length));
-      binary += String.fromCharCode.apply(null, chunk);
+      binary += Array.from(chunk, byte => String.fromCharCode(byte)).join('');
     }
     return btoa(binary);
   } catch (err) {
@@ -160,11 +160,27 @@ async function encryptToken(token) {
 async function decryptToken(encryptedToken) {
   if (!encryptedToken) return encryptedToken;
   
+  // Check if token appears to be base64 encoded (encrypted format)
+  // Base64 only contains alphanumeric, +, /, and = characters
+  const isEncrypted = /^[A-Za-z0-9+/]+=*$/.test(encryptedToken);
+  
+  if (!isEncrypted) {
+    // Token is not in encrypted format, likely legacy plaintext
+    console.warn('Decrypting legacy plaintext token');
+    return encryptedToken;
+  }
+  
   try {
     const key = await getEncryptionKey();
     
     // Base64 decode
     const combined = Uint8Array.from(atob(encryptedToken), c => c.charCodeAt(0));
+    
+    // Verify minimum length (12 bytes IV + at least some encrypted data)
+    if (combined.length < 13) {
+      console.error('Token too short to be encrypted');
+      return encryptedToken;
+    }
     
     // Extract IV and encrypted data
     const iv = combined.slice(0, 12);
@@ -178,7 +194,9 @@ async function decryptToken(encryptedToken) {
     
     return new TextDecoder().decode(decrypted);
   } catch (err) {
-    // If decryption fails, assume it's plaintext (for backward compatibility)
+    console.error('Token decryption failed:', err);
+    // If decryption fails, return plaintext for backward compatibility
+    // but log the error for debugging
     return encryptedToken;
   }
 }

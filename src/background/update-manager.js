@@ -50,8 +50,12 @@ let checkingAll = false;
 let logQueue = [];
 let logLastWriteTime = 0;
 
-// Compute MD5 hash for integrity verification against man-in-the-middle attacks
-// Using a simple MD5 implementation since crypto.subtle doesn't support MD5
+// Compute MD5 hash for integrity verification
+// NOTE: MD5 is cryptographically weak and vulnerable to collision attacks.
+// This implementation is used ONLY because the server provides MD5 hashes.
+// It protects against accidental corruption and casual tampering, but NOT
+// against sophisticated attacks. A migration to SHA-256 would require
+// server-side changes to provide SHA-256 hashes instead of MD5.
 function computeMd5(str) {
   // Simple MD5 hash implementation
   // This is a basic implementation for integrity checking
@@ -318,10 +322,9 @@ export async function checkStyle(opts) {
     updateUrl = style.updateUrl = `${usoApi}Css/${usoId}`;
     const {result: css} = await tryDownload(updateUrl, {responseType: 'json'});
     
-    // Verify MD5 integrity to detect tampering or corruption
-    // Note: MD5 is used here because the server provides MD5 hashes
-    // While MD5 is cryptographically weak, it still provides protection against
-    // accidental corruption and casual tampering
+    // Verify MD5 integrity to detect corruption and casual tampering
+    // NOTE: This provides protection against accidental corruption, not sophisticated attacks
+    // JSON.stringify is used for non-string data; ensure this matches server's MD5 calculation
     const cssText = typeof css === 'string' ? css : JSON.stringify(css);
     const computedMd5 = computeMd5(cssText);
     if (computedMd5 !== md5) {
