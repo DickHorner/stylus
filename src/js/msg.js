@@ -15,29 +15,42 @@ export const wrapError = error => ({
   }, error), // passing custom properties e.g. `error.index`
 });
 
-// SECURITY: Restrict messages to trusted content scripts
-// Only allow messages from extension's own content scripts
+// Message origin validation to prevent untrusted sources from sending messages
 function isMessageTrusted(sender) {
-  if (!sender.url && !sender.frameId) {
-    // Background script or extension page
-    return true;
+  // Validate sender.id matches our extension
+  if (sender.id !== chrome.runtime.id) {
+    return false;
   }
-  // Check if message comes from our content script
-  if (sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}`)) {
-    return true;
+
+  // Validate URL if present (defense-in-depth)
+  if (sender.url) {
+    try {
+      const url = new URL(sender.url);
+      // Only allow messages from our extension's pages
+      // Using .host which includes both hostname and port (though extensions don't use ports)
+      if (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') {
+        return url.host === chrome.runtime.id;
+      }
+      // For content scripts in regular web pages, verify the origin
+      if (sender.origin) {
+        return sender.origin === `chrome-extension://${chrome.runtime.id}` ||
+               sender.origin === `moz-extension://${chrome.runtime.id}`;
+      }
+      // If no origin is set but URL is from a web page, it might be a content script
+      // Allow for backward compatibility but log for monitoring
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        console.debug('Message from content script without explicit origin:', sender.url);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('Invalid sender URL:', sender.url, e);
+      return false;
+    }
   }
-  // Messages from web pages must be from content scripts only
-  // Content scripts loaded by extension are marked with specific properties
-  // Only trust content scripts injected by this extension
-  if (
-    sender.frameId !== undefined &&
-    sender.id === chrome.runtime.id &&
-    typeof sender.url === 'string' &&
-    (sender.url.startsWith('http://') || sender.url.startsWith('https://'))
-  ) {
-    return true;
-  }
-  return false;
+
+  // Messages without URL (e.g., from background or popup) are trusted if sender.id matches
+  return true;
 }
 
 chrome.runtime.onMessage.addListener(onRuntimeMessage);
@@ -77,11 +90,10 @@ export function _execute(data, sender, multi, broadcast) {
 }
 
 function onRuntimeMessage({data, multi, TDM, broadcast}, sender, sendResponse) {
-  // SECURITY: Validate message origin before processing
+  // Validate message origin to prevent unauthorized access
   if (!isMessageTrusted(sender)) {
-    console.warn('[msg] Rejecting message from untrusted sender:', sender.url || sender);
-    sendResponse(wrapError(new Error('Message origin not trusted')));
-    return false;
+    console.warn('Rejected message from untrusted origin:', sender);
+    return;
   }
 
   if (!__.MV3 && !__.IS_BG && data.method === 'backgroundReady') {
