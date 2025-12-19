@@ -10,16 +10,16 @@ import {isVivaldi} from './common';
 
 /**
  * OAuth provider configurations
- * 
+ *
  * SECURITY NOTE: OAuth client secrets have been removed from providers that use
  * the 'code' flow (google, onedrive, userstylesworld). This is a security best
  * practice as client secrets should never be embedded in client-side code.
- * 
+ *
  * KNOWN LIMITATION: Without client secrets, the OAuth authorization code flow
  * will not work properly for these providers. The proper solution is to implement
  * a backend OAuth proxy service that securely stores the client secrets and
  * performs the token exchange on behalf of the extension.
- * 
+ *
  * Providers using the 'token' flow (like dropbox) do not require client secrets
  * and continue to work normally.
  */
@@ -95,7 +95,7 @@ let encryptionKey = null;
 
 async function getEncryptionKey() {
   if (encryptionKey) return encryptionKey;
-  
+
   // Try to get existing key from storage
   const stored = await chromeLocal.getValue('tokenEncryptionKey');
   if (stored) {
@@ -108,40 +108,40 @@ async function getEncryptionKey() {
     );
     return encryptionKey;
   }
-  
+
   // Generate new key
   encryptionKey = await crypto.subtle.generateKey(
     {name: 'AES-GCM', length: 256},
     true,
     ['encrypt', 'decrypt']
   );
-  
+
   // Store key for future use
   const exportedKey = await crypto.subtle.exportKey('jwk', encryptionKey);
   await chromeLocal.setValue('tokenEncryptionKey', exportedKey);
-  
+
   return encryptionKey;
 }
 
 async function encryptToken(token) {
   if (!token) return token;
-  
+
   try {
     const key = await getEncryptionKey();
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(token);
-    
+
     const encrypted = await crypto.subtle.encrypt(
       {name: 'AES-GCM', iv},
       key,
       encoded
     );
-    
+
     // Combine IV and encrypted data, then base64 encode
     const combined = new Uint8Array(iv.length + encrypted.byteLength);
     combined.set(iv, 0);
     combined.set(new Uint8Array(encrypted), iv.length);
-    
+
     // Use chunked approach to avoid stack overflow with large arrays
     let binary = '';
     const chunkSize = 8192;
@@ -159,39 +159,39 @@ async function encryptToken(token) {
 
 async function decryptToken(encryptedToken) {
   if (!encryptedToken) return encryptedToken;
-  
+
   // Check if token appears to be base64 encoded (encrypted format)
   // Base64 only contains alphanumeric, +, /, and = characters
   const isEncrypted = /^[A-Za-z0-9+/]+=*$/.test(encryptedToken);
-  
+
   if (!isEncrypted) {
     // Token is not in encrypted format, likely legacy plaintext
     console.warn('Decrypting legacy plaintext token');
     return encryptedToken;
   }
-  
+
   try {
     const key = await getEncryptionKey();
-    
+
     // Base64 decode
     const combined = Uint8Array.from(atob(encryptedToken), c => c.charCodeAt(0));
-    
+
     // Verify minimum length (12 bytes IV + at least some encrypted data)
     if (combined.length < 13) {
       console.error('Token too short to be encrypted');
       return encryptedToken;
     }
-    
+
     // Extract IV and encrypted data
     const iv = combined.slice(0, 12);
     const encrypted = combined.slice(12);
-    
+
     const decrypted = await crypto.subtle.decrypt(
       {name: 'AES-GCM', iv},
       key,
       encrypted
     );
-    
+
     return new TextDecoder().decode(decrypted);
   } catch (err) {
     console.error('Token decryption failed:', err);
@@ -218,7 +218,7 @@ export async function getToken(name, interactive, hooks) {
   if (obj[k.TOKEN]) {
     if (!obj[k.EXPIRE] || Date.now() < obj[k.EXPIRE]) {
       // Decrypt token before returning
-      return await decryptToken(obj[k.TOKEN]);
+      return decryptToken(obj[k.TOKEN]);
     }
     if (obj[k.REFRESH]) {
       return refreshToken(name, k, obj);
@@ -375,7 +375,7 @@ async function handleTokenResult(result, k) {
   // Encrypt tokens before storing for defense-in-depth protection
   const encryptedToken = await encryptToken(result.access_token);
   const encryptedRefresh = await encryptToken(result.refresh_token);
-  
+
   await chromeLocal.set({
     [k.TOKEN]: encryptedToken,
     [k.EXPIRE]: result.expires_in

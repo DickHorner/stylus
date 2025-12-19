@@ -21,7 +21,7 @@ function isMessageTrusted(sender) {
   if (sender.id !== chrome.runtime.id) {
     return false;
   }
-  
+
   // Validate URL if present (defense-in-depth)
   if (sender.url) {
     try {
@@ -48,7 +48,7 @@ function isMessageTrusted(sender) {
       return false;
     }
   }
-  
+
   // Messages without URL (e.g., from background or popup) are trusted if sender.id matches
   return true;
 }
@@ -95,7 +95,7 @@ function onRuntimeMessage({data, multi, TDM, broadcast}, sender, sendResponse) {
     console.warn('Rejected message from untrusted origin:', sender);
     return;
   }
-  
+
   if (!__.MV3 && !__.IS_BG && data.method === 'backgroundReady') {
     bgReadySignal?.(true);
   }

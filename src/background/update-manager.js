@@ -60,7 +60,8 @@ function computeMd5(str) {
   // Simple MD5 hash implementation
   // This is a basic implementation for integrity checking
   function md5cycle(x, k) {
-    let a = x[0], b = x[1], c = x[2], d = x[3];
+    let a = x[0]; let b = x[1]; let c = x[2]; let
+      d = x[3];
     a = ff(a, b, c, d, k[0], 7, -680876936);
     d = ff(d, a, b, c, k[1], 12, -389564586);
     c = ff(c, d, a, b, k[2], 17, 606105819);
@@ -188,12 +189,12 @@ function computeMd5(str) {
     return md5blks;
   }
 
-  const hex_chr = '0123456789abcdef'.split('');
+  const hexChr = '0123456789abcdef'.split('');
 
   function rhex(n) {
     let s = '';
     for (let j = 0; j < 4; j++)
-      s += hex_chr[(n >> (j * 8 + 4)) & 0x0F] + hex_chr[(n >> (j * 8)) & 0x0F];
+      s += hexChr[(n >> (j * 8 + 4)) & 0x0F] + hexChr[(n >> (j * 8)) & 0x0F];
     return s;
   }
 
@@ -321,7 +322,7 @@ export async function checkStyle(opts) {
     }
     updateUrl = style.updateUrl = `${usoApi}Css/${usoId}`;
     const {result: css} = await tryDownload(updateUrl, {responseType: 'json'});
-    
+
     // Verify MD5 integrity to detect corruption and casual tampering
     // NOTE: This provides protection against accidental corruption, not sophisticated attacks
     // JSON.stringify is used for non-string data; ensure this matches server's MD5 calculation
@@ -331,7 +332,7 @@ export async function checkStyle(opts) {
       console.error('MD5 integrity check failed for style update');
       return Promise.reject(STATES.ERROR_MD5);
     }
-    
+
     const json = await updateUsercss(css)
       || await toUsercss(usoId, varsUrl, css, style, md5, md5Url);
     json.originalMd5 = md5;
