@@ -15,6 +15,37 @@ export const wrapError = error => ({
   }, error), // passing custom properties e.g. `error.index`
 });
 
+// Message origin validation to prevent untrusted sources from sending messages
+function isMessageTrusted(sender) {
+  // Messages from the extension itself are always trusted
+  if (sender.id === chrome.runtime.id) {
+    return true;
+  }
+  
+  // Messages without a tab (e.g., from extension pages) are trusted
+  if (!sender.tab) {
+    return true;
+  }
+  
+  // Validate origin for messages from tabs
+  if (sender.url) {
+    try {
+      const url = new URL(sender.url);
+      // Allow messages from extension pages
+      if (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') {
+        return url.hostname === chrome.runtime.id || url.host === chrome.runtime.id;
+      }
+      // For other origins, only allow if explicitly from our extension's content scripts
+      return sender.origin === `chrome-extension://${chrome.runtime.id}` ||
+             sender.origin === `moz-extension://${chrome.runtime.id}`;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  return false;
+}
+
 chrome.runtime.onMessage.addListener(onRuntimeMessage);
 if (__.ENTRY) {
   chrome.runtime.onConnect.addListener(async port => {
@@ -52,6 +83,12 @@ export function _execute(data, sender, multi, broadcast) {
 }
 
 function onRuntimeMessage({data, multi, TDM, broadcast}, sender, sendResponse) {
+  // Validate message origin to prevent unauthorized access
+  if (!isMessageTrusted(sender)) {
+    console.warn('Rejected message from untrusted origin:', sender);
+    return;
+  }
+  
   if (!__.MV3 && !__.IS_BG && data.method === 'backgroundReady') {
     bgReadySignal?.(true);
   }

@@ -206,6 +206,33 @@ export async function fetchText(url, opts) {
 
 /** @this {Object} DriveOptions */
 export function fetchWebDAV(url, init = {}) {
+  // Enforce HTTPS for remote WebDAV connections to prevent credential interception
+  let href = url;
+  if (url instanceof URL) {
+    href = url.href;
+  } else if (url && typeof url === 'object' && 'url' in url) {
+    href = url.url;
+  }
+  if (typeof href !== 'string') {
+    href = String(href);
+  }
+
+  try {
+    const parsed = new URL(href, typeof location !== 'undefined' ? location.href : undefined);
+    const hostname = parsed.hostname;
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    
+    if (parsed.protocol === 'http:' && !isLoopback) {
+      throw new Error('Insecure WebDAV URL: HTTPS is required for remote WebDAV connections.');
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.includes('Insecure WebDAV URL')) {
+      throw e;
+    }
+    // If URL parsing fails, throw a descriptive error
+    throw new Error(`Invalid WebDAV URL: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   return fetch(url, {
     ...init,
     credentials: 'omit', // circumventing nextcloud CSRF token error
