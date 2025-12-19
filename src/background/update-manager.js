@@ -318,7 +318,10 @@ export async function checkStyle(opts) {
     updateUrl = style.updateUrl = `${usoApi}Css/${usoId}`;
     const {result: css} = await tryDownload(updateUrl, {responseType: 'json'});
     
-    // Verify MD5 integrity to prevent man-in-the-middle attacks
+    // Verify MD5 integrity to detect tampering or corruption
+    // Note: MD5 is used here because the server provides MD5 hashes
+    // While MD5 is cryptographically weak, it still provides protection against
+    // accidental corruption and casual tampering
     const cssText = typeof css === 'string' ? css : JSON.stringify(css);
     const computedMd5 = computeMd5(cssText);
     if (computedMd5 !== md5) {

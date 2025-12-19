@@ -8,6 +8,21 @@ import {browserWindows} from '@/js/util-webext';
 import launchWebAuthFlow from 'webext-launch-web-auth-flow';
 import {isVivaldi} from './common';
 
+/**
+ * OAuth provider configurations
+ * 
+ * SECURITY NOTE: OAuth client secrets have been removed from providers that use
+ * the 'code' flow (google, onedrive, userstylesworld). This is a security best
+ * practice as client secrets should never be embedded in client-side code.
+ * 
+ * KNOWN LIMITATION: Without client secrets, the OAuth authorization code flow
+ * will not work properly for these providers. The proper solution is to implement
+ * a backend OAuth proxy service that securely stores the client secrets and
+ * performs the token exchange on behalf of the extension.
+ * 
+ * Providers using the 'token' flow (like dropbox) do not require client secrets
+ * and continue to work normally.
+ */
 const AUTH = {
   dropbox: {
     flow: 'token',
@@ -25,7 +40,7 @@ const AUTH = {
   google: {
     flow: 'code',
     clientId: '283762574871-d4u58s4arra5jdan2gr00heasjlttt1e.apps.googleusercontent.com',
-    // clientSecret removed for security - must be handled by backend OAuth service
+    // clientSecret removed - requires backend OAuth service for security
     authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
     authQuery: {
       // NOTE: Google needs 'prompt' parameter to deliver multiple refresh
@@ -45,7 +60,7 @@ const AUTH = {
   onedrive: {
     flow: 'code',
     clientId: '3864ce03-867c-4ad8-9856-371a097d47b1',
-    // clientSecret removed for security - must be handled by backend OAuth service
+    // clientSecret removed - requires backend OAuth service for security
     authURL: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
     tokenURL: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
     scopes: ['Files.ReadWrite.AppFolder', 'offline_access'],
@@ -53,7 +68,7 @@ const AUTH = {
   userstylesworld: {
     flow: 'code',
     clientId: 'zeDmKhJIfJqULtcrGMsWaxRtWHEimKgS',
-    // clientSecret removed for security - must be handled by backend OAuth service
+    // clientSecret removed - requires backend OAuth service for security
     authURL: URLS.usw + 'api/oauth/style/link',
     tokenURL: URLS.usw + 'api/oauth/token',
     redirect_uri: 'https://gusted.xyz/callback_helper/',
@@ -127,11 +142,18 @@ async function encryptToken(token) {
     combined.set(iv, 0);
     combined.set(new Uint8Array(encrypted), iv.length);
     
-    return btoa(String.fromCharCode(...combined));
+    // Use chunked approach to avoid stack overflow with large arrays
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < combined.length; i += chunkSize) {
+      const chunk = combined.subarray(i, Math.min(i + chunkSize, combined.length));
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binary);
   } catch (err) {
     console.error('Token encryption failed:', err);
-    // Return plaintext as fallback to avoid breaking functionality
-    return token;
+    // Throw error instead of falling back to plaintext to maintain security
+    throw new Error(`Token encryption failed: ${err.message}`);
   }
 }
 

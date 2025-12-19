@@ -220,7 +220,11 @@ export function fetchWebDAV(url, init = {}) {
   try {
     const parsed = new URL(href, typeof location !== 'undefined' ? location.href : undefined);
     const hostname = parsed.hostname;
-    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    
+    // Check for loopback addresses (localhost, IPv4 127.0.0.0/8, IPv6 ::1)
+    const isLoopback = hostname === 'localhost' ||
+                       hostname === '::1' ||
+                       /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
     
     if (parsed.protocol === 'http:' && !isLoopback) {
       throw new Error('Insecure WebDAV URL: HTTPS is required for remote WebDAV connections.');
