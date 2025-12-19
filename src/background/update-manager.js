@@ -328,7 +328,7 @@ export async function checkStyle(opts) {
     const cssText = typeof css === 'string' ? css : JSON.stringify(css);
     const computedMd5 = computeMd5(cssText);
     if (computedMd5 !== md5) {
-      console.error(`MD5 mismatch: expected ${md5}, got ${computedMd5}`);
+      console.error('MD5 integrity check failed for style update');
       return Promise.reject(STATES.ERROR_MD5);
     }
     

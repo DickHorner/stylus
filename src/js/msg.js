@@ -27,8 +27,9 @@ function isMessageTrusted(sender) {
     try {
       const url = new URL(sender.url);
       // Only allow messages from our extension's pages
+      // Using .host which includes both hostname and port (though extensions don't use ports)
       if (url.protocol === 'chrome-extension:' || url.protocol === 'moz-extension:') {
-        return url.hostname === chrome.runtime.id || url.host === chrome.runtime.id;
+        return url.host === chrome.runtime.id;
       }
       // For content scripts in regular web pages, verify the origin
       if (sender.origin) {
